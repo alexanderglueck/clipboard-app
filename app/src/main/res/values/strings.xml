@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Universal Clipboard</string>
+    <string name="action_copy_to_online_clipboard">Copy to universal clipboard</string>
+</resources>
