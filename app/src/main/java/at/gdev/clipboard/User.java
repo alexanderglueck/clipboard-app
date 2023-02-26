@@ -4,6 +4,10 @@ public class User {
     String username;
     String fullName;
     String apiToken;
+    String salt;
+    String key;
+    String password;
+    String iv;
     int id;
 
     public void setUsername(String username) {
@@ -38,5 +42,35 @@ public class User {
         return fullName;
     }
 
+    public String getSalt() {
+        return salt;
+    }
 
+    public void setSalt(String salt) {
+        this.salt = salt;
+    }
+
+    public String getKey() {
+        return key;
+    }
+
+    public void setKey(String key) {
+        this.key = key;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+    public String getIv() {
+        return iv;
+    }
+
+    public void setIv(String iv) {
+        this.iv = iv;
+    }
 }

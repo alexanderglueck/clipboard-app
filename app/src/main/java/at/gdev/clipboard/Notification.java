@@ -5,7 +5,7 @@ import java.io.Serializable;
 public class Notification implements Serializable {
     private int userId;
     private String title;
-    private String url;
+    private String encryptedContent;
 
     public int getUserId() {
         return userId;
@@ -23,11 +23,11 @@ public class Notification implements Serializable {
         this.title = title;
     }
 
-    public String getUrl() {
-        return url;
+    public String getEncryptedContent() {
+        return encryptedContent;
     }
 
-    public void setUrl(String url) {
-        this.url = url;
+    public void setEncryptedContent(String encryptedContent) {
+        this.encryptedContent = encryptedContent;
     }
 }

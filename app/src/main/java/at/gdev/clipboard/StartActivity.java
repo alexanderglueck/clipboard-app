@@ -40,7 +40,7 @@ public class StartActivity extends AppCompatActivity {
         if (preferencesHelper.isLoggedIn()) {
             Log.d(TAG, "in start, eingeloggt");
 
-            activityIntent = new Intent(this, MainActivity.class);
+            activityIntent = new Intent(this, ClipboardActivity.class);
 
             Intent intent = getIntent();
 

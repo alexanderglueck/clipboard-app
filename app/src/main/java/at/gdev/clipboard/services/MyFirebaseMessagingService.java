@@ -10,6 +10,7 @@ import android.content.SharedPreferences;
 import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
+import android.util.Base64;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -20,8 +21,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import at.gdev.clipboard.ApiClient;
 import at.gdev.clipboard.ApiInterface;
 import at.gdev.clipboard.Constants;
-import at.gdev.clipboard.LoginActivity;
-import at.gdev.clipboard.MainActivity;
+import at.gdev.clipboard.ClipboardActivity;
 import at.gdev.clipboard.Notification;
 import at.gdev.clipboard.R;
 import at.gdev.clipboard.SessionHandler;
@@ -29,9 +29,25 @@ import at.gdev.clipboard.responses.AttachTokenResponse;
 import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
 
+import java.nio.charset.StandardCharsets;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.spec.InvalidKeySpecException;
 import java.util.List;
 import java.util.Map;
 
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.spec.SecretKeySpec;
+
+import at.gdev.clipboard.responses.PasteResponse;
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
@@ -77,7 +93,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
 
             Notification notification = new Notification();
             notification.setTitle("Tap to paste from universal clipboard");
-            notification.setUrl(data.get(Constants.NOTIFICATION_CONTENT_KEY));
+            notification.setEncryptedContent(data.get(Constants.NOTIFICATION_CONTENT_KEY));
             notification.setUserId(Integer.parseInt("" + data.get(Constants.NOTIFICATION_USER_ID_KEY)));
 
             String title;
@@ -95,14 +111,14 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 //LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
 
                 if (applicationInForeground()) {
-                    // eingeloggt und offen
-                    Log.d(TAG, "eingeloggt und offen");
+                    // logged in and in foreground
+                    Log.d(TAG, "logged in and in foreground");
 
                     LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
                 } else {
-                    Log.d(TAG, "eingeloggt und zu");
+                    Log.d(TAG, "logged in and hidden");
 
-                    // eingeloggt und zu
+                    // logged in and hidden
                     sendNotification(notification, true);
                 }
 
@@ -197,42 +213,113 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     private void sendNotification(Notification notification, boolean signedIn) {
         Intent intent;
         String title = notification.getTitle();
-        String body = notification.getUrl();
+
 
         if (signedIn) {
-            intent = new Intent(this, MainActivity.class);
+            intent = new Intent(this, ClipboardActivity.class);
         } else {
             return;
         }
 
-        intent.putExtra(Constants.INTENT_EXTRA_NOTIFICATION, notification.getUrl());
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0 /* Request code */, intent,
-                PendingIntent.FLAG_ONE_SHOT);
+        // TODO fetch and decrypt the received message
+        SessionHandler helper = new SessionHandler(getApplicationContext());
 
-        String channelId = getString(R.string.default_notification_channel_id);
-        Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-        NotificationCompat.Builder notificationBuilder =
-                new NotificationCompat.Builder(this, channelId)
-                        .setSmallIcon(R.drawable.ic_launcher_foreground)
-                        .setColor(ContextCompat.getColor(this, R.color.purple_200))
-                        .setContentTitle(title)
-                        .setContentText(body)
-                        .setAutoCancel(true)
-                        .setSound(defaultSoundUri)
-                        .setContentIntent(pendingIntent);
+        Context myContext = this;
 
-        NotificationManager notificationManager =
-                (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        String pasteToFetch = notification.getEncryptedContent();
+        ApiInterface apiService2 = ApiClient.getClient().create(ApiInterface.class);
+        Call<PasteResponse> pasteResponseCall = apiService2.fetchPaste("Bearer " + helper.getUserDetails().getApiToken(), Integer.parseInt(pasteToFetch));
+        pasteResponseCall.enqueue(new Callback<PasteResponse>() {
+            @Override
+            public void onResponse(Call<PasteResponse> call, Response<PasteResponse> response) {
 
-        // Since android Oreo notification channel is needed.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(channelId,
-                    getString(R.string.default_notification_channel_name),
-                    NotificationManager.IMPORTANCE_DEFAULT);
-            notificationManager.createNotificationChannel(channel);
-        }
+                Log.d("TAG", "post to fetch: " + pasteToFetch);
+                String encryptedContent = response.body().getContent();
+                Log.d("CONTEnT", encryptedContent);
 
-        notificationManager.notify(0 /* ID of notification */, notificationBuilder.build());
+                String decryptedMessage = "";
+
+                try {
+                    int iterations = 100000;
+                    int keyLength = 64 * 4;
+
+                    SessionHandler sessionHandler = new SessionHandler(myContext);
+
+                    byte[] salt = Base64.decode(sessionHandler.getUserDetails().getSalt(), Base64.NO_WRAP);
+
+                    PBEKeySpec spec = new PBEKeySpec(sessionHandler.getUserDetails().getPassword().toCharArray(), salt, iterations, keyLength);
+                    SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2withHmacSHA256");
+                    byte[] keyBytes = factory.generateSecret(spec).getEncoded();
+
+                    // use passwordBasedKey to decrypt the key
+
+                    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                    SecretKeySpec key = new SecretKeySpec(keyBytes, "AES");
+                    byte[] iv = Base64.decode(sessionHandler.getUserDetails().getIv(), Base64.NO_WRAP);
+
+                    cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, iv));
+                    cipher.update(Base64.decode(sessionHandler.getUserDetails().getKey(), Base64.NO_WRAP));
+                    byte[] symmetricKey = cipher.doFinal();
+
+                    byte[] decodedSymmetricKey = java.util.Base64.getDecoder().decode(symmetricKey);
+
+                    Log.d("DECRY", Base64.encodeToString(decodedSymmetricKey, Base64.NO_WRAP));
+
+                    // use the decrypted key to decrypt the text
+
+                    cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(decodedSymmetricKey, "AES"), new GCMParameterSpec(128, iv));
+                    cipher.update(Base64.decode(encryptedContent, Base64.NO_WRAP));
+                    byte[] plainText2 = cipher.doFinal();
+
+                    Log.d("DECMSG1", Base64.encodeToString(plainText2, Base64.NO_WRAP));
+
+
+                    decryptedMessage = new String(plainText2);
+
+                    Log.d("DECMSG", decryptedMessage);
+
+                } catch(NoSuchAlgorithmException | InvalidKeyException | InvalidKeySpecException |
+                        BadPaddingException | IllegalBlockSizeException |
+                        InvalidAlgorithmParameterException | NoSuchPaddingException e) {
+                    throw new IllegalStateException("Could not decrypt", e);
+                }
+
+                intent.putExtra(Constants.INTENT_EXTRA_NOTIFICATION, decryptedMessage);
+                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                PendingIntent pendingIntent = PendingIntent.getActivity(myContext, 0 /* Request code */, intent,
+                        PendingIntent.FLAG_ONE_SHOT);
+
+                String channelId = getString(R.string.default_notification_channel_id);
+                Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                NotificationCompat.Builder notificationBuilder =
+                        new NotificationCompat.Builder(myContext, channelId)
+                                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                                .setColor(ContextCompat.getColor(myContext, R.color.purple_200))
+                                .setContentTitle(title)
+                                .setContentText(decryptedMessage)
+                                .setAutoCancel(true)
+                                .setSound(defaultSoundUri)
+                                .setContentIntent(pendingIntent);
+
+                NotificationManager notificationManager =
+                        (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+
+                // Since android Oreo notification channel is needed.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    NotificationChannel channel = new NotificationChannel(channelId,
+                            getString(R.string.default_notification_channel_name),
+                            NotificationManager.IMPORTANCE_DEFAULT);
+                    notificationManager.createNotificationChannel(channel);
+                }
+
+                notificationManager.notify(0 /* ID of notification */, notificationBuilder.build());
+            }
+
+            @Override
+            public void onFailure(Call<PasteResponse> call, Throwable t) {
+                Log.d("TAG", "Response = " + t.toString());
+            }
+        });
+
     }
 }

@@ -18,8 +18,18 @@ import at.gdev.clipboard.responses.AttachTokenResponse;
 import at.gdev.clipboard.responses.RemoveTokenResponse;
 import at.gdev.clipboard.responses.SessionResponse;
 
+import java.nio.charset.StandardCharsets;
+import java.security.DigestException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.spec.InvalidKeySpecException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
+
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -76,7 +86,7 @@ public class LoginActivity extends AppCompatActivity {
      */
     private void loadDashboard() {
 
-        Intent i = new Intent(getApplicationContext(), MainActivity.class);
+        Intent i = new Intent(getApplicationContext(), ClipboardActivity.class);
 
         if (getIntent().getExtras() != null) {
 
@@ -122,8 +132,21 @@ public class LoginActivity extends AppCompatActivity {
     private void login() {
         displayLoader();
 
+        String passwordHash;
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+
+            md.update(password.getBytes(StandardCharsets.UTF_8));
+            byte[] passwordHashBytes = md.digest();
+            passwordHash = Base64.getEncoder().encodeToString(passwordHashBytes);
+
+        } catch (NoSuchAlgorithmException e) {
+            pDialog.dismiss();
+            return;
+        }
+
         ApiInterface apiService = ApiClient.getClient().create(ApiInterface.class);
-        Call<SessionResponse> call = apiService.login(username, password);
+        Call<SessionResponse> call = apiService.login(username, passwordHash);
         call.enqueue(new Callback<SessionResponse>() {
             @Override
             public void onResponse(@NonNull Call<SessionResponse> call, @NonNull Response<SessionResponse> response) {
@@ -131,6 +154,7 @@ public class LoginActivity extends AppCompatActivity {
                 if (sessionResponse == null) {
                     pDialog.dismiss();
                 } else {
+                    Log.d("TAG", response.toString());
                     Log.d("TAG", "Response = " + sessionResponse.getName() + sessionResponse.getId() + sessionResponse.getApiToken());
 
                     boolean openDeviceSelection = false;
@@ -193,7 +217,8 @@ public class LoginActivity extends AppCompatActivity {
                                     // if last saved device id still exists
                                     // check if tokens match up, if same token
                                     // reselect this device. we are still set up
-                                    session.loginUser(sessionResponse.getId(), username, sessionResponse.getName(), sessionResponse.getApiToken());
+                                    session.loginUser(sessionResponse.getId(), username, sessionResponse.getName(), sessionResponse.getApiToken(),
+                                            sessionResponse.getSalt(), sessionResponse.getKey(), password, sessionResponse.getIv());
                                     pDialog.dismiss();
                                     loadDashboard();
                                 } else if (lastSavedDeviceIdStillExists) {
@@ -209,7 +234,8 @@ public class LoginActivity extends AppCompatActivity {
                                         @Override
                                         public void onResponse(Call<AttachTokenResponse> call, Response<AttachTokenResponse> response) {
 
-                                            session.loginUser(sessionResponse.getId(), username, sessionResponse.getName(), sessionResponse.getApiToken());
+                                            session.loginUser(sessionResponse.getId(), username, sessionResponse.getName(), sessionResponse.getApiToken(),
+                                                    sessionResponse.getSalt(), sessionResponse.getKey(), password, sessionResponse.getIv());
                                             pDialog.dismiss();
                                             loadDashboard();
                                         }
@@ -280,7 +306,7 @@ public class LoginActivity extends AppCompatActivity {
                             @Override
                             public void onResponse(Call<AttachTokenResponse> call, Response<AttachTokenResponse> response) {
 
-                                session.loginUser(sessionResponse.getId(), username, sessionResponse.getName(), sessionResponse.getApiToken());
+                                session.loginUser(sessionResponse.getId(), username, sessionResponse.getName(), sessionResponse.getApiToken(), sessionResponse.getSalt(), sessionResponse.getKey(), password, sessionResponse.getIv());
                                 dialog.dismiss();
                                 loadDashboard();
                             }

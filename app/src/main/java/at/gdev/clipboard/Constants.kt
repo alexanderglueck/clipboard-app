@@ -16,4 +16,5 @@ object Constants {
     const val LAST_SIGNED_IN_DEVICE_ID = "last_device_id"
 
     const val BASE_URL = "https://clipboard.gdev.at/api/"
+//    const val BASE_URL = "http://10.0.2.2:8080/api/"
 }
