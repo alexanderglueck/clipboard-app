@@ -30,8 +30,10 @@ class ClipboardActivity : AppCompatActivity() {
         var text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)
         val text2 = intent.getCharSequenceExtra(Constants.INTENT_EXTRA_NOTIFICATION);
 
+        var isNotification = false;
         if (text == null && text2 != null) {
             text = text2;
+            isNotification = true;
         }
 
         if (text != null) {
@@ -55,59 +57,71 @@ class ClipboardActivity : AppCompatActivity() {
                     0
                 )
 
-            var encryptedContent = "";
+            if (!isNotification) {
+                var encryptedContent = "";
 
 
-                        val iterations = 100000;
-            val keyLength = 64 * 4;
+                val iterations = 100000;
+                val keyLength = 64 * 4;
 
-            var salt = Base64.decode(sessionHandler.userDetails.salt,  Base64.NO_WRAP)
+                var salt = Base64.decode(sessionHandler.userDetails.salt, Base64.NO_WRAP)
 
-            var spec = PBEKeySpec(sessionHandler.userDetails.password.toCharArray(), salt, iterations, keyLength);
-            var factory = SecretKeyFactory.getInstance("PBKDF2withHmacSHA256");
-            var keyBytes = factory.generateSecret(spec).getEncoded();
+                var spec = PBEKeySpec(
+                    sessionHandler.userDetails.password.toCharArray(),
+                    salt,
+                    iterations,
+                    keyLength
+                );
+                var factory = SecretKeyFactory.getInstance("PBKDF2withHmacSHA256");
+                var keyBytes = factory.generateSecret(spec).getEncoded();
 
 
+                // use passwordBasedKey to decrypt the key
+                Log.d("TAG", Base64.encodeToString(keyBytes, Base64.NO_WRAP));
 
+                var cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                var key = SecretKeySpec(keyBytes, "AES")
+                var iv = Base64.decode(sessionHandler.userDetails.iv, Base64.NO_WRAP);
 
-            // use passwordBasedKey to decrypt the key
-            Log.d("TAG", Base64.encodeToString(keyBytes, Base64.NO_WRAP));
+                cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+                Log.d("KEY", sessionHandler.userDetails.key)
+                cipher.update(Base64.decode(sessionHandler.userDetails.key, Base64.NO_WRAP));
+                val encodedSymmetricKey = cipher.doFinal()
 
-            var cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            var key = SecretKeySpec(keyBytes, "AES")
-            var iv = Base64.decode(sessionHandler.userDetails.iv, Base64.NO_WRAP);
+                // Decode symmetric key
 
-            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
-            Log.d("KEY", sessionHandler.userDetails.key)
-            cipher.update(Base64.decode(sessionHandler.userDetails.key, Base64.NO_WRAP));
-            val encodedSymmetricKey = cipher.doFinal()
+                val decodedSymmetricKey = java.util.Base64.getDecoder().decode(encodedSymmetricKey)
 
-            // Decode symmetric key
+                // use the decrypted key to encrypt the text
 
-            val decodedSymmetricKey = java.util.Base64.getDecoder().decode(encodedSymmetricKey)
+                cipher.init(
+                    Cipher.ENCRYPT_MODE,
+                    SecretKeySpec(decodedSymmetricKey, "AES"),
+                    GCMParameterSpec(128, iv)
+                )
+                val cipherText = cipher.doFinal(text.toString().toByteArray(StandardCharsets.UTF_8))
 
-            // use the decrypted key to encrypt the text
+                encryptedContent = Base64.encodeToString(cipherText, Base64.NO_WRAP)
 
-            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(decodedSymmetricKey, "AES"), GCMParameterSpec(128, iv))
-            val cipherText = cipher.doFinal(text.toString().toByteArray(StandardCharsets.UTF_8))
+                val call = apiService.pushPaste(
+                    "Bearer " + sessionHandler.userDetails.apiToken,
+                    lastSavedDeviceId,
+                    encryptedContent
+                )
 
-            encryptedContent = Base64.encodeToString(cipherText, Base64.NO_WRAP)
+                call.enqueue(object : Callback<PushUrlResponse> {
+                    override fun onResponse(
+                        call: Call<PushUrlResponse>,
+                        response: Response<PushUrlResponse>
+                    ) {
+                        Log.d("TAG", "Response = ${response.body()}")
+                    }
 
-            val call = apiService.pushPaste(
-                "Bearer " + sessionHandler.userDetails.apiToken,
-                lastSavedDeviceId,
-                encryptedContent
-            )
-
-            call.enqueue(object : Callback<PushUrlResponse> {
-                override fun onResponse(call: Call<PushUrlResponse>, response: Response<PushUrlResponse>) {
-                    Log.d("TAG", "Response = ${response.body()}")
-                }
-
-                override fun onFailure(call: Call<PushUrlResponse>, t: Throwable) {
-                    Log.d("TAG", "Response = $t")
-                }
-            });
+                    override fun onFailure(call: Call<PushUrlResponse>, t: Throwable) {
+                        Log.d("TAG", "Response = $t")
+                    }
+                });
+            }
 
             finish()
         }
